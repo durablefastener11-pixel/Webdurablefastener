@@ -1,3 +1,4 @@
+// ProductDetail.tsx
 import React, { useState, useMemo, useEffect } from 'react';
 import * as ReactRouterDOM from 'react-router-dom';
 import { supabase } from '../lib/supabase';
@@ -90,13 +91,27 @@ const itemVar: Variants = {
   visible: { opacity: 1, y: 0, transition: { type: 'spring', stiffness: 60, damping: 20 } },
 };
 
-const R2_BASE = "https://pub-ffd0eb07a99540ac95c35c521dd8f7ae.r2.dev";
-
+// =========================================
+// SMART IMAGE URL HELPER
+// =========================================
 const cleanImageUrl = (url: string): string => {
-  if (!url) return '';
-  if (url.startsWith('http')) return url;
-  const fileName = url.split('/').pop();
-  return `${R2_BASE}/${fileName}`;
+  if (!url || typeof url !== 'string') return '';
+  
+  const R2_BASE = "https://pub-ffd0eb07a99540ac95c35c521dd8f7ae.r2.dev";
+  
+  // Already R2 → return as-is
+  if (url.startsWith(R2_BASE)) return url;
+  
+  // ANY full URL (workers.dev, supabase.co, etc.)
+  // → extract just the filename → redirect to R2
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    const fileName = url.split('/').pop();
+    return `${R2_BASE}/${fileName}`;
+  }
+  
+  // Relative path → prepend R2
+  const cleanPath = url.startsWith('/') ? url.slice(1) : url;
+  return `${R2_BASE}/${cleanPath}`;
 };
 
 // ✅ Improved FAQ Schema Builder – ensures valid format for Google
@@ -121,6 +136,17 @@ const buildFaqSchema = (faqs: { question: string; answer: string }[]) => {
 };
 
 /** BreadcrumbList schema – always valid */
+const buildBreadcrumbSchema = (productName: string, slug: string) => ({
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://durablefastener.com" },
+    { "@type": "ListItem", "position": 2, "name": "Products", "item": "https://durablefastener.com/products" },
+    { "@type": "ListItem", "position": 3, "name": productName, "item": `https://durablefastener.com/product/${slug}` },
+  ],
+});
+
+/** Product schema – robust for all product types (fasteners, fittings, etc.) */
 const buildProductSchema = (
   product: any,
   slug: string,
@@ -128,14 +154,14 @@ const buildProductSchema = (
   selectedLen: string,
   selectedUnit: string,
 ) => {
-  // Ensure images array exists
+  // Ensure images array exists, at least one placeholder
   let images = (product.images || []);
   if (!images.length) {
     images = ['https://via.placeholder.com/600x600?text=No+Image'];
   }
   const cleanedImages = images.map((img: string) => cleanImageUrl(img));
 
-  // Build specifications
+  // Build additionalProperty safely
   const specifications = product.specifications || [];
   const additionalProperties = specifications
     .filter((s: any) => s?.key && !HIDDEN_SPECS.includes(s.key.toLowerCase()))
@@ -145,7 +171,7 @@ const buildProductSchema = (
       "value": s.value,
     }));
 
-  // Build size
+  // Build size string only if both dimensions exist
   let size = undefined;
   if (selectedDia && selectedLen) {
     size = `${selectedDia} × ${selectedLen} ${selectedUnit}`;
@@ -161,10 +187,7 @@ const buildProductSchema = (
     "image": cleanedImages,
     "sku": product.slug || slug,
     "mpn": product.slug || slug,
-    "brand": { 
-      "@type": "Brand", 
-      "name": "Classone" 
-    },
+    "brand": { "@type": "Brand", "name": "Classone" },
     "manufacturer": {
       "@type": "Organization",
       "name": "Durable Fastener Private Limited",
@@ -174,53 +197,25 @@ const buildProductSchema = (
     "material": product.material || "",
     ...(size ? { "size": size } : {}),
     ...(additionalProperties.length > 0 ? { "additionalProperty": additionalProperties } : {}),
-    
-    // ✅ FIXED: Clean offer structure with no duplicate price
     "offers": {
       "@type": "Offer",
       "url": `https://durablefastener.com/product/${slug}`,
       "priceCurrency": "INR",
-      
-      // ✅ Single price field only
       "price": "0",
-      
-      // ✅ Realistic price range with all required fields
       "priceSpecification": {
         "@type": "PriceSpecification",
         "price": "0",
         "priceCurrency": "INR",
         "description": "Contact for bulk pricing",
-        "valueAddedTaxIncluded": false,
-        "minPrice": 100,      // ✅ More realistic minimum
-        "maxPrice": 50000,    // ✅ More realistic maximum
-        "priceType": "https://schema.org/ContactForPrice"
       },
-      
-      // ✅ Added price validity range
-      "priceValidFrom": new Date().toISOString().split('T')[0],
       "priceValidUntil": new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString().split('T')[0],
-      
       "availability": "https://schema.org/InStock",
       "itemCondition": "https://schema.org/NewCondition",
-      
-      // ✅ Complete seller info
       "seller": {
         "@type": "Organization",
         "name": "Durable Fastener Private Limited",
-        "url": "https://durablefastener.com"
       },
-      
-      // ✅ Added business function
-      "businessFunction": "https://schema.org/Sell",
-      
-      // ✅ Added eligible quantity for bulk orders
-      "eligibleQuantity": {
-        "@type": "QuantitativeValue",
-        "minValue": 100,
-        "maxValue": 10000,
-        "unitCode": "H87"  // Pieces
-      }
-    }
+    },
   };
 };
 
@@ -546,6 +541,13 @@ const ProductDetail: React.FC = () => {
   const displayMaterial = product.material || '';
   const displayHeadType = product.head_type?.replace(/Buggel/gi, 'Bugle') || '';
   const materialData = getMaterialData(displayMaterial);
+  const seoTitle = product.seo_title || `${product.name} | Durable Fastener – Industrial Solutions`;
+const seoDescription = product.seo_description 
+  || product.short_description 
+  || `High-quality ${product.name} from Durable Fastener. Ideal for industrial applications. Bulk orders available.`;
+  const metaKeywords = product.seo_keywords ? (
+  <meta name="keywords" content={product.seo_keywords} />
+) : null;
 
   // Schema data – always generated even if some fields missing
   const breadcrumbSchema = buildBreadcrumbSchema(product.name, slug!);
@@ -553,7 +555,13 @@ const ProductDetail: React.FC = () => {
   const faqSchema = buildFaqSchema(product.faqs || []);
 
   // Determine canonical URL – always use product slug
-  const canonicalUrl = `https://durablefastener.com/product/${slug}`;
+  const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'https://durablefastener.com';
+  
+  // Kyunki aapke sabhi products '/product/slug' par khulte hain, canonical bhi same rahega
+  const canonicalUrl = `${baseUrl}/product/${slug}`;
+
+  // Testing ke liye console log (aap testing ke baad isse hata sakte hain)
+  console.log("Current Canonical URL:", canonicalUrl);
 
   return (
     <div
@@ -561,12 +569,9 @@ const ProductDetail: React.FC = () => {
       style={fontBody}
     >
       <Helmet>
-        <title>{product.name} | Durable Fastener – Industrial Solutions</title>
-        <link rel="canonical" href={canonicalUrl} />
-        <meta
-          name="description"
-          content={product.short_description || `High-quality ${product.name} from Durable Fastener. Ideal for industrial applications. Bulk orders available.`}
-        />
+         <title>{seoTitle}</title>
+  <link rel="canonical" href={canonicalUrl} />
+  <meta name="description" content={seoDescription} />
         {/* Breadcrumb Schema */}
         <script type="application/ld+json">
           {JSON.stringify(breadcrumbSchema)}
@@ -578,7 +583,7 @@ const ProductDetail: React.FC = () => {
       </Helmet>
 
       {/* Breadcrumb Nav Bar */}
-      <div className="fixed top-[80px] md:top-[170px] left-0 w-full z-30 bg-neutral-900 border-b border-neutral-800 shadow-md">
+      <div className="fixed top-[80px] md:top-[96px] left-0 w-full z-30 bg-neutral-900 border-b border-neutral-800 shadow-md">
         <div className="max-w-7xl mx-auto px-5 py-2.5">
           <nav className="flex items-center gap-2 text-[13px] md:text-[14px] font-medium tracking-wide">
             <Link to="/" className="text-neutral-400 hover:text-white transition-colors">Home</Link>
@@ -678,48 +683,84 @@ const ProductDetail: React.FC = () => {
 
                   {/* SELECT LENGTH */}
                   {availableLengthOptions.length > 0 && (
-                    <div className="mb-5">
-                      <div className="flex justify-between items-end mb-0 border-b border-neutral-100 pb-2">
-                        <SectionHeader icon={Maximize2} title={`Select Length (${selectedUnit})`} />
-                        <span className="text-4xl font-bold text-neutral-900 tracking-tight" style={fontHeading}>
-                          {selectedLen || '--'}
-                          <span className="text-sm text-neutral-400 ml-1 font-sans font-medium">{selectedUnit}</span>
-                        </span>
-                      </div>
-                      <div className="w-full bg-neutral-50 border border-neutral-200 rounded-xl p-2 relative overflow-hidden">
-                        <div
-                          className="absolute inset-0 opacity-[0.05] pointer-events-none"
-                          style={{
-                            backgroundImage: 'linear-gradient(#000 1px,transparent 1px),linear-gradient(90deg,#000 1px,transparent 1px)',
-                            backgroundSize: '12px 12px',
-                          }}
-                        />
-                        <div className="flex items-end justify-between h-32 gap-1 relative z-10 w-full px-1">
-                          {availableLengthOptions.map((opt: any, idx: number) => {
-                            const isSelected = selectedLen === opt.value && selectedUnit === opt.unit;
-                            return (
-                              <button
-                                key={idx}
-                                onClick={() => { setSelectedLen(opt.value); setSelectedUnit(opt.unit); }}
-                                className="group flex-1 flex flex-col items-center justify-end h-full gap-3 focus:outline-none relative"
-                              >
-                                <span className={`font-mono transition-all duration-200 whitespace-nowrap block ${isSelected
-                                    ? 'text-base font-bold text-neutral-900 -translate-y-2 scale-110'
-                                    : 'text-xs sm:text-sm text-neutral-500 font-medium group-hover:text-neutral-900'
-                                  }`}>
-                                  {parseFloat(opt.value)}
-                                  {opt.unit !== 'mm' && <span className="text-[9px] block text-center">{opt.unit}</span>}
-                                </span>
-                                <div className={`w-1.5 sm:w-2 rounded-t-[2px] transition-all duration-300 ${isSelected ? 'h-full bg-yellow-500 shadow-md' : 'h-8 bg-neutral-300 group-hover:h-12 group-hover:bg-neutral-400'
-                                  }`} />
-                                <div className="absolute bottom-0 w-full h-[1px] bg-neutral-300 -z-10" />
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </div>
-                  )}
+  <div className="mb-5">
+    <div className="flex justify-between items-end mb-0 border-b border-neutral-100 pb-2">
+      <SectionHeader icon={Maximize2} title={`Select Length (${selectedUnit})`} />
+      <span className="text-4xl font-bold text-neutral-900 tracking-tight" style={fontHeading}>
+        {selectedLen || '--'}
+        <span className="text-sm text-neutral-400 ml-1 font-sans font-medium">{selectedUnit}</span>
+      </span>
+    </div>
+    <div className="w-full bg-neutral-50 border border-neutral-200 rounded-xl p-2 relative overflow-hidden">
+      <div
+        className="absolute inset-0 opacity-[0.05] pointer-events-none"
+        style={{
+          backgroundImage: 'linear-gradient(#000 1px,transparent 1px),linear-gradient(90deg,#000 1px,transparent 1px)',
+          backgroundSize: '12px 12px',
+        }}
+      />
+      <div className="flex items-end justify-between h-40 gap-1 relative z-10 w-full px-1">
+        {availableLengthOptions.map((opt: any, idx: number) => {
+          const isSelected = selectedLen === opt.value && selectedUnit === opt.unit;
+          
+          // --- AUTO BAR HEIGHT CALCULATION ---
+          // Find min and max length values for dynamic scaling
+          const numericValues = availableLengthOptions.map(o => parseFloat(o.value));
+          const minVal = Math.min(...numericValues);
+          const maxVal = Math.max(...numericValues);
+          const range = maxVal - minVal || 1; // Avoid division by zero
+          
+          // Calculate percentage height (minimum 20% height for visibility)
+          const currentValue = parseFloat(opt.value);
+          const heightPercent = 20 + ((currentValue - minVal) / range) * 70; // 20% to 90% range
+          const barHeight = Math.max(25, Math.min(90, heightPercent)); // Clamp between 25% and 90%
+          
+          return (
+            <button
+              key={idx}
+              onClick={() => { setSelectedLen(opt.value); setSelectedUnit(opt.unit); }}
+              className="group flex-1 flex flex-col items-center justify-end h-full gap-2 focus:outline-none relative"
+            >
+              {/* BAR - height dynamically scales with length value */}
+              <div 
+                className={`w-1.5 sm:w-3 rounded-t-[3px] transition-all duration-300 ${
+                  isSelected ? 'bg-yellow-500 shadow-lg shadow-yellow-500/30' : 'bg-neutral-300 group-hover:bg-neutral-400'
+                }`}
+                style={{ 
+                  height: `${barHeight}%`,
+                  minHeight: '8px'
+                }}
+              />
+              
+              {/* VALUE LABEL */}
+              <span className={`font-mono transition-all duration-200 whitespace-nowrap block ${
+                isSelected 
+                  ? 'text-base font-bold text-neutral-900 -translate-y-0.5 scale-110' 
+                  : 'text-xs sm:text-sm text-neutral-500 font-medium group-hover:text-neutral-900'
+              }`}>
+                {parseFloat(opt.value)}
+                {opt.unit !== 'mm' && <span className="text-[9px] block text-center">{opt.unit}</span>}
+              </span>
+              
+              {/* SELECTION INDICATOR LINE */}
+              <div className="absolute bottom-0 w-full h-[1px] bg-neutral-300 -z-10" />
+              
+              {/* SMALL RULER MARKERS */}
+              <div className="absolute bottom-5 w-px h-1.5 bg-neutral-300 -z-5" />
+            </button>
+          );
+        })}
+      </div>
+      
+      {/* RULER REFERENCE LABELS */}
+      <div className="flex justify-between px-1 mt-1 text-[8px] font-mono text-neutral-400 uppercase tracking-wider">
+        <span>Min</span>
+        <span>Length Scale</span>
+        <span>Max</span>
+      </div>
+    </div>
+  </div>
+)}
 
                   {/* Finish */}
                   {availableFinishes.length > 0 && (
